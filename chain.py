@@ -205,6 +205,10 @@ def evaluate_rule_26_foreign_limit(
     annual_remittance_usd: int,
     request_amount_usd: int,
 ) -> Dict[str, Any]:
+    """ID 26 해외송금 연간 누적 한도 규정을 검증합니다.
+    - 연간 누적 금액과 이번 요청 금액(USD)의 합이 50,000 USD 이하인지 판단합니다.
+    - 위반 시 법적 근거와 거절 사유를 반환합니다.
+    """
     annual_remittance_usd = int(annual_remittance_usd)
     request_amount_usd = int(request_amount_usd)
     projected_total = annual_remittance_usd + request_amount_usd
@@ -228,6 +232,10 @@ def evaluate_rule_30_dsr(
     annual_income: int,
     annual_debt_service: int,
 ) -> Dict[str, Any]:
+    """ID 30 DSR(총부채원리금상환비율) 규정을 검증합니다.
+    - DSR = annual_debt_service / annual_income 로 계산합니다.
+    - DSR이 40%를 초과하거나 연소득이 0 이하이면 실패 처리합니다.
+    """
     annual_income = int(annual_income)
     annual_debt_service = int(annual_debt_service)
 
@@ -260,6 +268,10 @@ def evaluate_rule_39_investment_suitability(
     investment_profile: str,
     requested_product_risk: str,
 ) -> Dict[str, Any]:
+    """ID 39 투자 적합성 규정을 검증합니다.
+    - 투자 성향이 안정형이고 요청 상품 위험등급이 고위험이면 위반으로 처리합니다.
+    - 위반 시 법적 근거와 거절 사유를 반환합니다.
+    """
     normalized_profile = (investment_profile or "").strip().lower()
     normalized_risk = (requested_product_risk or "").strip().lower()
 
@@ -288,6 +300,10 @@ def evaluate_compliance_26_30_39(
     investment_profile: str,
     requested_product_risk: str,
 ) -> Dict[str, Any]:
+    """ID 26 -> ID 30 -> ID 39를 순차적으로 검증합니다.
+    - 첫 위반 규정에서 즉시 중단하고 실패 정보를 반환합니다.
+    - 모든 검증 통과 시 approved=True를 반환합니다.
+    """
     checks = [
         evaluate_rule_26_foreign_limit(annual_remittance_usd, request_amount_usd),
         evaluate_rule_30_dsr(annual_income, annual_debt_service),
@@ -324,6 +340,12 @@ def evaluate_compliance_by_request_type(
     investment_profile: str,
     requested_product_risk: str,
 ) -> Dict[str, Any]:
+    """요청 유형별로 컴플라이언스 검증 규칙을 분기합니다.
+    - 송금: ID 26/30/39 직접 미적용
+    - 해외송금: ID 26 적용
+    - 대출: ID 30 적용
+    - 투자: ID 39 적용
+    """
     normalized_type = (request_type or "").strip()
 
     if normalized_type == "송금":
@@ -420,11 +442,13 @@ def evaluate_unified_policy(
     investment_profile: str,
     requested_product_risk: str,
 ) -> Dict[str, Any]:
-    """통합 금융 정책을 평가하는 함수입니다.
-    - 사용자 등급, 요청 금액, 당일 누적 이체액, 최근 1시간 내 소액 결제 횟수, 해외 IP 접근 여부를 입력으로 받아서 이체 가능 여부, 차단 여부, 추가 인증 필요 여부 등을 종합적으로 판정합니다.
-    - 먼저 차단 거래 이력 평가 함수를 호출하여 차단 여부를 판정합니다. 차단으로 판정되면 즉시 차단 결과를 반환합니다.
-    - 차단으로 판정되지 않으면 이체 정책 평가 함수를 호출하여 이체 가능 여부와 추가 인증 필요 여부를 판정합니다.
-    - 반환값은 이체 가능 여부, 차단 여부, 추가 인증 필요 여부,적용된 규정 근거, 다음 노드 안내 등을 포함하는 딕셔너리입니다.
+    """요청 유형별 컴플라이언스와 거래 정책을 통합 판정합니다.
+    - 1단계: 요청 유형에 맞는 규정(ID 26/30/39) 검증
+    - 2단계: 위반 시 즉시 거절(법적 근거/거절 사유 포함)
+    - 3단계: 통과 시 요청 유형별 후속 흐름 분기
+      - 송금/해외송금: FDS/이체한도/MFA 규칙 적용
+      - 대출: Credit_Score 노드로 이동
+      - 투자: Investment_Suitability 흐름으로 이동
     """
     compliance = evaluate_compliance_by_request_type(
         request_type=request_type,

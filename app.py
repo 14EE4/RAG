@@ -54,6 +54,10 @@ def ask_grade() -> str:
 
 
 def ask_request_type() -> str:
+	"""요청 유형 입력을 표준 값으로 변환하는 함수입니다.
+	- 1=송금, 2=해외송금, 3=대출, 4=투자 입력을 지원합니다.
+	- 허용되지 않는 값은 기본값으로 송금을 반환합니다.
+	"""
 	raw_value = input("요청 유형을 선택하세요 (1=송금, 2=해외송금, 3=대출, 4=투자): ").strip().lower()
 	if raw_value in {"1", "송금", "transfer"}:
 		return "송금"
@@ -78,6 +82,10 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
 
 
 def ask_investment_profile() -> str:
+	"""투자 성향 입력을 표준 값으로 변환하는 함수입니다.
+	- 1=안정형, 2=중립형, 3=공격형 입력을 지원합니다.
+	- 허용되지 않는 값은 기본값으로 중립형을 반환합니다.
+	"""
 	raw_value = input("투자 성향을 선택하세요 (1=안정형, 2=중립형, 3=공격형): ").strip().lower()
 	if raw_value in {"1", "안정형", "stable"}:
 		return "안정형"
@@ -89,6 +97,10 @@ def ask_investment_profile() -> str:
 
 
 def ask_product_risk() -> str:
+	"""요청 상품 위험등급 입력을 표준 값으로 변환하는 함수입니다.
+	- 1=저위험, 2=중위험, 3=고위험 입력을 지원합니다.
+	- 허용되지 않는 값은 기본값으로 중위험을 반환합니다.
+	"""
 	raw_value = input("요청 상품 위험등급을 선택하세요 (1=저위험, 2=중위험, 3=고위험): ").strip().lower()
 	if raw_value in {"1", "저위험", "low"}:
 		return "저위험"
