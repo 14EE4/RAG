@@ -1,0 +1,6 @@
+./venv/
+.env
+./content/
+exp-faiss/
+__pycache__/
+libs/transaction_history.jsonl
