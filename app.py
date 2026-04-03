@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ VECTORSTORE_PATH = Path("./exp-faiss/vectorstore")
 DATASET_PATH = Path("./libs/dataset.csv")
 TRANSACTION_HISTORY_PATH = Path("./libs/transaction_history.jsonl")
 SMALL_PAYMENT_THRESHOLD_KRW = 100_000
+FX_KRW_PER_USD = 1_500
 
 history = InMemoryChatMessageHistory()
 
@@ -255,7 +257,7 @@ def main():
 	request_amount_usd = 0
 	if request_type == "해외송금":
 		annual_remittance_usd = ask_int("연간 해외송금 누적 금액을 입력하세요(USD): ", 0)
-		request_amount_usd = ask_int("이번 해외송금 요청 금액을 입력하세요(USD): ", 0)
+		request_amount_usd = math.ceil(request_amount / FX_KRW_PER_USD)
 
 	annual_income = 0
 	annual_debt_service = 0
