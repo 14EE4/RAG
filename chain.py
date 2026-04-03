@@ -52,6 +52,12 @@ UNIFIED_PROMPT = """당신은 금융 이체/차단 통합 상담원입니다.
 반드시 아래 참고 문서와 규칙 판정만 근거로 답변하세요.
 추측은 하지 말고, 규정이 없는 부분은 '문서상 별도 규정 없음'이라고 말하세요.
 
+중요 규칙:
+- 규칙 판정의 결론(이체 가능 여부, 차단 여부, 다음 노드)은 이미 확정값입니다.
+- 결론을 다시 판정하거나 뒤집지 마세요.
+- 결론 요약 문구를 반복하지 말고, 왜 그런 결론이 나왔는지 근거 문서 중심으로 설명하세요.
+- 참고 문서에서 확인되는 규정 ID/제목/핵심 문장을 포함하세요.
+
 [참고 문서]
 {context}
 
@@ -59,12 +65,9 @@ UNIFIED_PROMPT = """당신은 금융 이체/차단 통합 상담원입니다.
 {decision}
 
 출력 형식:
-- 이체 가능 여부
-- 차단 여부(ID 9 관련)
-- 추가 인증 필요 여부
-- 다음 노드(ID 10 또는 일반 흐름)
-- 근거
-- 사용자 안내
+- 정책 해설
+- 적용 규정 근거 (ID/제목/핵심 문장)
+- 사용자 행동 가이드
 """
 
 
@@ -211,6 +214,19 @@ def evaluate_unified_policy(
         }
 
     transfer_result = evaluate_transfer_policy(grade, request_amount, daily_total)
+    next_node_id = 5 if transfer_result["extra_auth_required"] else None
+    next_node_name = "Security_Check" if transfer_result["extra_auth_required"] else "일반 검증 흐름"
+    next_node_reason = (
+        "고액 이체로 인해 Security_Check 노드에서 추가 인증(생체+SMS)을 먼저 수행합니다."
+        if transfer_result["extra_auth_required"]
+        else "FDS 차단이 없어 기존 이체 검증/보안 절차를 따릅니다."
+    )
+    user_message = (
+        "고액 이체이므로 Security_Check 노드에서 추가 인증 후 이체가 진행됩니다."
+        if transfer_result["extra_auth_required"]
+        else "일반 이체 정책 기준으로 처리됩니다."
+    )
+
     return {
         "blocked": False,
         "transferable": transfer_result["transferable"],
@@ -221,11 +237,11 @@ def evaluate_unified_policy(
         "daily_limit": transfer_result["daily_limit"],
         "single_limit": transfer_result["single_limit"],
         "extra_auth_text": transfer_result["extra_auth_text"],
-        "next_node_id": None,
-        "next_node_name": "일반 검증 흐름",
-        "next_node_reason": "FDS 차단이 없어 기존 이체 검증/보안 절차를 따릅니다.",
+        "next_node_id": next_node_id,
+        "next_node_name": next_node_name,
+        "next_node_reason": next_node_reason,
         "reasons": transfer_result["reasons"],
-        "user_message": "일반 이체 정책 기준으로 처리됩니다.",
+        "user_message": user_message,
     }
 
 
@@ -355,7 +371,7 @@ def build_unified_banking_chain(vectorstore, llm=None):
                 "당일 누적 이체액: {daily_total}원\n"
                 "최근 1시간 소액 결제 횟수: {recent_small_payment_count}회\n"
                 "해외 IP 접근 여부: {foreign_ip_access}\n"
-                "질문: 이체 가능 여부, 차단 여부, 추가 인증, 다음 노드를 통합 안내해 주세요.",
+                "질문: 확정된 규칙 판정이 왜 나왔는지, 벡터 검색된 규정 근거를 들어 설명해 주세요.",
             ),
         ]
     )
