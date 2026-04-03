@@ -1,57 +1,64 @@
 # RAG Banking Policy Assistant
 
-이 프로젝트는 금융 이체 정책을 RAG로 설명하고, 실제 판단은 코드 규칙으로 고정하는 통합형 프로그램입니다.
+규정 기반 금융 요청 판정 + RAG 근거 설명 프로그램입니다.
 
-핵심 목표는 다음 두 가지입니다.
+이 프로젝트는 다음 원칙으로 동작합니다.
 
-1. 결정 일관성: 이체 가능 여부, 차단 여부, 다음 노드는 코드 규칙으로 확정
-2. 설명 품질: LLM은 벡터 검색된 규정 문서를 근거로 "왜" 그런 결정이 나왔는지 설명
+1. 결정은 코드 규칙으로 고정합니다.
+2. LLM은 벡터 검색된 규정 문서로 근거 설명만 생성합니다.
 
-## 주요 기능
+## 현재 지원 요청 유형
 
-1. 통합 입력 플로우
-- 등급 선택: `1=VIP`, `2=일반`
-- 요청 금액 입력
-- 해외 IP 여부 입력
+1. 송금
+2. 해외송금
+3. 대출
+4. 투자
 
-2. 자동 계산
-- 당일 누적 이체액: `libs/transaction_history.jsonl` 기반 자동 합산
+## 핵심 정책 로직
+
+### 송금
+
+- ID 9(FDS) 차단 조건 검사
+- 차단 시 ID 10(고객센터 연결) 분기
+- 차단이 아니면 이체 한도 및 MFA 규칙 적용
+
+### 해외송금
+
+- ID 26(연간 해외송금 누적 한도) 검사
+- 한도 위반 시 즉시 거절 + 법적 근거 출력
+- 한도 통과 시 송금 흐름(FDS/한도/MFA) 이어서 적용
+
+### 대출
+
+- ID 30(DSR 40% 규정) 검사
+- 위반 시 즉시 거절 + 법적 근거 출력
+- 통과 시 Credit_Score 흐름으로 이동
+
+### 투자
+
+- ID 39(투자 적합성) 검사
+- 안정형 + 고위험 요청이면 즉시 거절 + 법적 근거 출력
+- 통과 시 투자 안내 흐름으로 이동
+
+## 해외송금 환율 처리
+
+- 해외송금에서 금액은 KRW 한 번만 입력합니다.
+- USD 환산은 고정 환율 `1 USD = 1500 KRW`를 사용합니다.
+- 환산식: `request_amount_usd = ceil(request_amount_krw / 1500)`
+
+## 자동 계산 항목
+
+- 당일 누적 이체액: `libs/transaction_history.jsonl`에서 자동 합산
 - 최근 1시간 소액 결제 횟수: 거래 로그 기반 자동 집계
 
-3. 정책 판정(고정 로직)
-- ID 9 (FDS 차단 조건):
-	- 최근 1시간 소액 결제 `5회 이상` 또는 해외 IP 접근이면 차단
-	- 차단 시 즉시 `고객센터 연결`(ID 10) 분기
-- 일반 이체 한도:
-	- 일반: 1회 200만 원, 1일 500만 원
-	- VIP: 1일 5,000만 원
-- VIP 고액 이체:
-	- 1,000만 원 이상이면 `Security_Check` 노드(추가 인증) 분기
+## 주요 파일
 
-4. RAG 설명
-- 벡터스토어에서 규정 문서 검색 후 LLM이 근거 설명 생성
-- 결론은 재판정하지 않고, 확정된 결정을 근거 중심으로 해설
-
-5. 거래 내역 저장
-- `libs/transaction_history.jsonl`에 매 요청 결과 append
-- 저장 필드: 시간, 등급, 금액, 자동 계산값, 차단 여부, 다음 노드 등
-
-## 프로젝트 구조
-
-- `app.py`: 실행 진입점, 입력 처리, 자동 집계, 결과 출력, 로그 저장
-- `chain.py`: 정책 판정 함수 + RAG 체인 구성
-- `vectorstore.py`: CSV 문서를 문서화하고 FAISS 벡터스토어 생성/로드
-- `embeddings.py`: Ollama 임베딩 모델 설정
-- `libs/dataset.csv`: 정책 원천 데이터
-- `libs/transaction_history.jsonl`: 거래 로그 파일(실행 중 자동 생성/추가)
-
-## 동작 개요
-
-1. 사용자 입력 수집
-2. 거래 로그에서 자동 지표 계산(당일 누적/1시간 소액 횟수)
-3. 정책 로직으로 결정 확정
-4. RAG 체인으로 근거 설명 생성
-5. 결과 출력 및 JSONL 저장
+- `app.py`: CLI 입력/출력, 자동 계산, 로그 저장
+- `chain.py`: 정책 판정 함수, 순차 검증, RAG 체인
+- `vectorstore.py`: CSV 문서 로드, 분할, FAISS 저장/로드
+- `embeddings.py`: Ollama 임베딩 설정
+- `libs/dataset.csv`: 규정 원천 데이터
+- `libs/transaction_history.jsonl`: 거래 로그(JSONL)
 
 ## 실행 방법
 
@@ -61,33 +68,63 @@
 & d:\vscodeworkspace\RAG\venv\Scripts\Activate.ps1
 ```
 
-2. 프로그램 실행
+2. 실행
 
 ```powershell
 & d:/vscodeworkspace/RAG/venv/Scripts/python.exe d:/vscodeworkspace/RAG/app.py
 ```
 
-3. 입력 예시
+## 입력 예시
+
+### 해외송금
 
 ```text
 사용자 등급을 선택하세요 (1=VIP, 2=일반): 1
-요청 금액을 입력하세요(원): 20000000
+요청 유형을 선택하세요 (1=송금, 2=해외송금, 3=대출, 4=투자): 2
+요청 금액을 입력하세요(원): 1500000
 해외 IP 접근인가요? (y/n): n
+연간 해외송금 누적 금액을 입력하세요(USD): 49000
 ```
 
-## 출력 예시 해석
+### 대출
 
-- `결정 결과(고정)`: 실제 시스템 판단 기준
-- `RAG 설명(벡터 근거 기반 LLM)`: 데이터셋 규정 근거 해설
-- `저장된 거래 요약`: 로그에 저장되는 최종 레코드
+```text
+사용자 등급을 선택하세요 (1=VIP, 2=일반): 2
+요청 유형을 선택하세요 (1=송금, 2=해외송금, 3=대출, 4=투자): 3
+연소득을 입력하세요(원): 100000000
+연간 총원리금 상환액을 입력하세요(원): 50000000
+```
 
-## 데이터/정책 확장 포인트
+### 투자
 
-1. `libs/dataset.csv`에 규정 추가
-2. `chain.py`의 정책 판정 함수 확장
-3. 필요 시 GeoIP 자동 판별 로직 추가
+```text
+사용자 등급을 선택하세요 (1=VIP, 2=일반): 1
+요청 유형을 선택하세요 (1=송금, 2=해외송금, 3=대출, 4=투자): 4
+투자 성향을 선택하세요 (1=안정형, 2=중립형, 3=공격형): 1
+요청 상품 위험등급을 선택하세요 (1=저위험, 2=중위험, 3=고위험): 3
+```
+
+## 출력 구조
+
+1. 결정 결과(고정)
+- 실제 시스템 판정 기준
+
+2. RAG 설명(벡터 근거 기반 LLM)
+- 데이터셋 규정 인용 기반 해설
+
+3. 저장된 거래 요약
+- 로그에 기록되는 최종 레코드
+
+## 저장 로그 필드(요약)
+
+- `request_type`, `grade`, `request_amount`
+- `annual_remittance_usd`, `request_amount_usd`
+- `annual_income`, `annual_debt_service`
+- `investment_profile`, `requested_product_risk`
+- `compliance_approved`, `failed_rule_id`, `legal_basis`, `rejection_reason`
+- `blocked`, `transferable`, `extra_auth_required`, `next_node_name`
 
 ## 주의사항
 
-- `.gitignore`에 `venv/`, `contents/`, `exp-faiss/`, `libs/transaction_history.jsonl`이 포함되어 있어야 합니다.
-- RAG 설명은 근거 해설 용도이며, 최종 판정값은 코드 규칙 결과를 기준으로 사용해야 합니다.
+1. RAG 설명은 근거 해설이며, 최종 결론은 고정 결정 결과를 기준으로 사용해야 합니다.
+2. `.gitignore`에 `venv/`, `contents/`, `exp-faiss/`, `libs/transaction_history.jsonl`이 포함되어야 합니다.
