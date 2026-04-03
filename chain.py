@@ -277,6 +277,8 @@ def build_rag_chain(vectorstore, llm=None):
     - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
     - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 정책 평가 함수를 호출하는 단계를 체인에 추가합니다.
     - 최종적으로 LLM과 StrOutputParser를 연결하여 RAG 설명을 생성하는 체인을 반환합니다.
+        - 이 체인은 이체 가능 여부, 차단 여부, 추가 인증 필요 여부를 종합적으로 설명하는 RAG 결과를 생성합니다.
+        - 또한 거래 기록에 사용자 입력과 결정 결과를 저장하고, 결정 결과와 RAG 설명을 출력합니다.
     """
     from langchain_groq import ChatGroq
 
@@ -343,6 +345,8 @@ def build_history_analyzer_chain(vectorstore, llm=None):
     - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
     - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 차단 거래 이력 평가 함수를 호출하는 단계를 체인에 추가합니다.
     - 최종적으로 LLM과 StrOutputParser를 연결하여 차단 거래 분석 설명을 생성하는 체인을 반환합니다.
+        - 이 체인은 특정 거래가 왜 차단되었는지, 그 근거 규제는 무엇인지, 그리고 에이전트가 다음에 어떤 노드로 이동하는지를 설명하는 RAG 결과를 생성합니다.
+            - 또한 거래 기록에 사용자 입력과 결정 결과를 저장하고, 결정 결과와 RAG 설명을 출력합니다.
     """
     from langchain_groq import ChatGroq
 
@@ -407,6 +411,9 @@ def build_unified_banking_chain(vectorstore, llm=None):
     - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
     - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 통합 금융 정책 평가 함수를 호출하는 단계를 체인에 추가합니다.
     - 최종적으로 LLM과 StrOutputParser를 연결하여 통합 금융 정책 설명을 생성하는 체인을 반환합니다.
+        - 이 체인은 이체 가능 여부, 차단 여부, 추가 인증 필요 여부를 종합적으로 설명하는 RAG 결과를 생성합니다.
+        - 또한 거래 기록에 사용자 입력과 결정 결과를 저장하고, 결정 결과와 RAG 설명을 출력합니다.
+        - 반환값은 구축된 통합 금융 정책 체인 객체입니다.
     """
     from langchain_groq import ChatGroq
 
