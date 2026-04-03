@@ -72,6 +72,11 @@ UNIFIED_PROMPT = """당신은 금융 이체/차단 통합 상담원입니다.
 
 
 def evaluate_transfer_policy(grade: str, request_amount: int, daily_total: int = 0) -> Dict[str, Any]:
+    """이체 정책을 평가하는 함수입니다.
+    - 사용자 등급과 요청 금액, 당일 누적 이체액을 입력으로 받아서 이체 가능 여부, 추가 인증 필요 여부, 근거 등을 판정합니다.
+    - VIP 등급은 일일 5천만원, 일반 등급은 일일 5백만원, 1회 2백만원을 초과하는 경우 추가 인증이 필요하다고 가정합니다.
+    - 반환값은 이체 가능 여부, 추가 인증 필요 여부, 근거 설명 등을 포함하는 딕셔너리입니다.
+    """
     normalized_grade = (grade or "").strip().upper()
     request_amount = int(request_amount)
     daily_total = int(daily_total)
@@ -116,6 +121,11 @@ def evaluate_transfer_policy(grade: str, request_amount: int, daily_total: int =
 
 
 def _format_documents(documents) -> str:
+    """문서 리스트를 사람이 읽을 수 있는 형식으로 포맷팅하는 함수입니다.
+    - 각 문서는 페이지 콘텐츠와 메타데이터(출처, 제목 등)를 포함하는 객체입니다.
+    - 출력 형식은 '[인덱스] 제목 | source=출처\n페이지 콘텐츠'로 구성됩니다.
+    - 문서가 없는 경우 '관련 문서를 찾지 못했습니다.'라는 메시지를 반환합니다.
+    """
     if not documents:
         return "관련 문서를 찾지 못했습니다."
 
@@ -128,6 +138,11 @@ def _format_documents(documents) -> str:
 
 
 def _build_retrieval_query(inputs: Dict[str, Any]) -> str:
+    """벡터 검색을 위한 쿼리를 생성하는 함수입니다.
+    - 입력으로 사용자 등급, 요청 금액, 당일 누적 이체액 등을 받아서 검색 쿼리를 구성합니다.
+    - 쿼리는 이체 가능 여부와 추가 인증 필요 여부를 판단하기 위한 키워드와 함께 입력값을 포함하는 형식으로 작성됩니다.
+    - 예시: "이체 정책 검색. 등급: VIP. 요청 금액: 15000000원. 당일 누적 이체액: 30000000원. 이체 한도, 추가 인증, MFA, VIP, 일반 등급 규정을 찾아주세요.
+    """
     return (
         f"이체 정책 검색. 등급: {inputs.get('grade', '')}. "
         f"요청 금액: {inputs.get('request_amount', 0)}원. "
@@ -141,6 +156,11 @@ def evaluate_blocked_transaction_history(
     foreign_ip_access: bool,
     transaction_id: int = 9,
 ) -> Dict[str, Any]:
+    """차단 거래 이력을 평가하는 함수입니다.
+    - 최근 1시간 내 소액 결제 횟수와 해외 IP 접근 여부를 입력으로 받아서 차단 여부와 그 근거를 판정합니다.
+    - 최근 1시간 내 소액 결제 횟수가 5회 이상이거나 해외 IP 접근이 있는 경우 차단으로 판정합니다.
+    - 반환값은 차단 여부, 차단 근거 규제, 다음 노드 안내 등을 포함하는 딕셔너리입니다.
+    """
     normalized_id = int(transaction_id)
     recent_small_payment_count = int(recent_small_payment_count)
     foreign_ip_access = bool(foreign_ip_access)
@@ -186,6 +206,12 @@ def evaluate_unified_policy(
     recent_small_payment_count: int,
     foreign_ip_access: bool,
 ) -> Dict[str, Any]:
+    """통합 금융 정책을 평가하는 함수입니다.
+    - 사용자 등급, 요청 금액, 당일 누적 이체액, 최근 1시간 내 소액 결제 횟수, 해외 IP 접근 여부를 입력으로 받아서 이체 가능 여부, 차단 여부, 추가 인증 필요 여부 등을 종합적으로 판정합니다.
+    - 먼저 차단 거래 이력 평가 함수를 호출하여 차단 여부를 판정합니다. 차단으로 판정되면 즉시 차단 결과를 반환합니다.
+    - 차단으로 판정되지 않으면 이체 정책 평가 함수를 호출하여 이체 가능 여부와 추가 인증 필요 여부를 판정합니다.
+    - 반환값은 이체 가능 여부, 차단 여부, 추가 인증 필요 여부,적용된 규정 근거, 다음 노드 안내 등을 포함하는 딕셔너리입니다.
+    """
     blocked_result = evaluate_blocked_transaction_history(
         recent_small_payment_count=recent_small_payment_count,
         foreign_ip_access=foreign_ip_access,
@@ -246,6 +272,12 @@ def evaluate_unified_policy(
 
 
 def build_rag_chain(vectorstore, llm=None):
+    """RAG 체인을 구축하는 함수입니다.
+    - 벡터스토어에서 유사한 문서를 검색하는 retriever를 생성합니다.
+    - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
+    - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 정책 평가 함수를 호출하는 단계를 체인에 추가합니다.
+    - 최종적으로 LLM과 StrOutputParser를 연결하여 RAG 설명을 생성하는 체인을 반환합니다.
+    """
     from langchain_groq import ChatGroq
 
     if llm is None:
@@ -290,6 +322,11 @@ def build_rag_chain(vectorstore, llm=None):
 
 
 def _build_history_retrieval_query(inputs: Dict[str, Any]) -> str:
+    """차단 거래 이력 검색을 위한 쿼리를 생성하는 함수입니다.
+    - 입력으로 최근 1시간 내 소액 결제 횟수, 해외 IP 접근 여부, 거래 ID 등을 받아서 검색 쿼리를 구성합니다.
+    - 쿼리는 차단 거래 분석을 위한 키워드와 함께 입력값을 포함하는 형식으로 작성됩니다.
+    - 예시: "차단 거래 분석. 거래 ID: 9. 최근 1시간 소액 결제 횟수: 3회. 해외 IP 접근 여부: 예. FDS 이상거래탐지, 잠금 Locked, 고객센터 연결, 차단 조건, 에이전트 응답 프로토콜, ID 9, ID 10 규정을 찾아주세요. 
+    """
     recent_small_payment_count = inputs.get("recent_small_payment_count", 0)
     foreign_ip_access = inputs.get("foreign_ip_access", False)
     return (
@@ -301,6 +338,12 @@ def _build_history_retrieval_query(inputs: Dict[str, Any]) -> str:
 
 
 def build_history_analyzer_chain(vectorstore, llm=None):
+    """차단 거래 이력 분석 체인을 구축하는 함수입니다.
+    - 벡터스토어에서 유사한 문서를 검색하는 retriever를 생성합니다.
+    - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
+    - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 차단 거래 이력 평가 함수를 호출하는 단계를 체인에 추가합니다.
+    - 최종적으로 LLM과 StrOutputParser를 연결하여 차단 거래 분석 설명을 생성하는 체인을 반환합니다.
+    """
     from langchain_groq import ChatGroq
 
     if llm is None:
@@ -343,6 +386,11 @@ def build_history_analyzer_chain(vectorstore, llm=None):
 
 
 def _build_unified_retrieval_query(inputs: Dict[str, Any]) -> str:
+    """통합 금융 정책 검색을 위한 쿼리를 생성하는 함수입니다.
+    - 입력으로 사용자 등급, 요청 금액, 당일 누적 이체액, 최근 1시간 내 소액 결제 횟수, 해외 IP 접근 여부 등을 받아서 검색 쿼리를 구성합니다.
+    - 쿼리는 이체 가능 여부, 차단 여부, 추가 인증 필요 여부를 판단하기 위한 키워드와 함께 입력값을 포함하는 형식으로 작성됩니다.
+    - 예시: "통합 금융 정책 검색. 등급: VIP. 요청 금액: 15000000원. 당일 누적 이체액: 30000000원. 최근 1시간 소액 결제 횟수: 3회. 해외 IP 접근 여부: 예. ID 9 FDS 차단 조건, ID 10 고객센터 연결 노드, 이체 한도, MFA 규정을 찾아주세요.
+    """
     return (
         f"통합 금융 정책 검색. 등급: {inputs.get('grade', '')}. "
         f"요청 금액: {inputs.get('request_amount', 0)}원. "
@@ -354,6 +402,12 @@ def _build_unified_retrieval_query(inputs: Dict[str, Any]) -> str:
 
 
 def build_unified_banking_chain(vectorstore, llm=None):
+    """통합 금융 정책 체인을 구축하는 함수입니다.
+    - 벡터스토어에서 유사한 문서를 검색하는 retriever를 생성합니다.
+    - 시스템 프롬프트와 사용자 프롬프트를 포함하는 ChatPromptTemplate을 정의합니다.
+    - RunnablePassthrough와 RunnableLambda를 사용하여 검색된 문서를 포맷팅하고 통합 금융 정책 평가 함수를 호출하는 단계를 체인에 추가합니다.
+    - 최종적으로 LLM과 StrOutputParser를 연결하여 통합 금융 정책 설명을 생성하는 체인을 반환합니다.
+    """
     from langchain_groq import ChatGroq
 
     if llm is None:
