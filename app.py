@@ -73,12 +73,20 @@ def ask_request_type() -> str:
 def ask_yes_no(prompt: str, default: bool = False) -> bool:
 	"""사용자에게 예/아니오 입력을 요청하는 함수입니다.
 	- 입력이 없으면 기본값을 반환합니다.
-	- 예/아니오 입력을 다양한 형태로 인식합니다.
+	- 예/아니오 입력을 다양한 형태로 인식하며, 오타는 재입력 요청합니다.
     """
-	raw_value = input(prompt).strip().lower()
-	if not raw_value:
-		return default
-	return raw_value in {"y", "yes", "1", "true", "t", "예"}
+	yes_values = {"y", "yes", "1", "true", "t", "예"}
+	no_values = {"n", "no", "0", "false", "f", "아니오"}
+
+	while True:
+		raw_value = input(prompt).strip().lower()
+		if not raw_value:
+			return default
+		if raw_value in yes_values:
+			return True
+		if raw_value in no_values:
+			return False
+		print("잘못된 입력입니다. y 또는 n으로 입력해 주세요.")
 
 
 def ask_investment_profile() -> str:
