@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime
 from pathlib import Path
 
@@ -270,14 +269,16 @@ def main():
 
 	grade = ask_grade()
 	request_type = ask_request_type()
-	request_amount = ask_int("요청 금액을 입력하세요(원): ") if request_type in {"송금", "해외송금"} else 0
+	request_amount = ask_int("요청 금액을 입력하세요(원): ") if request_type == "송금" else 0
 	foreign_ip_access = ask_yes_no("해외 IP 접근인가요? (y/n): ") if request_type in {"송금", "해외송금"} else False
 
 	annual_remittance_usd = 0
 	request_amount_usd = 0
 	if request_type == "해외송금":
+		request_amount_usd = ask_int("요청 금액을 입력하세요(USD): ", 0)
+		# 기존 FDS/이체한도 계산은 KRW 기준이므로 내부 계산용 금액을 환산합니다.
+		request_amount = request_amount_usd * FX_KRW_PER_USD
 		annual_remittance_usd = ask_int("연간 해외송금 누적 금액을 입력하세요(USD): ", 0)
-		request_amount_usd = math.ceil(request_amount / FX_KRW_PER_USD)
 
 	annual_income = 0
 	annual_debt_service = 0
