@@ -57,6 +57,8 @@ UNIFIED_PROMPT = """당신은 금융 이체/차단 통합 상담원입니다.
 - 결론을 다시 판정하거나 뒤집지 마세요.
 - 결론 요약 문구를 반복하지 말고, 왜 그런 결론이 나왔는지 근거 문서 중심으로 설명하세요.
 - 참고 문서에서 확인되는 규정 ID/제목/핵심 문장을 포함하세요.
+- `compliance_approved`가 false이면 `failed_rule_id`에 해당하는 규정만 설명하고, 다른 규정은 언급하지 마세요.
+- `compliance_approved`가 true일 때만 FDS/한도/MFA 등 후속 규정을 설명하세요.
 
 [참고 문서]
 {context}
@@ -199,12 +201,224 @@ def evaluate_blocked_transaction_history(
     }
 
 
+def evaluate_rule_26_foreign_limit(
+    annual_remittance_usd: int,
+    request_amount_usd: int,
+) -> Dict[str, Any]:
+    annual_remittance_usd = int(annual_remittance_usd)
+    request_amount_usd = int(request_amount_usd)
+    projected_total = annual_remittance_usd + request_amount_usd
+    limit_usd = 50_000
+    passed = projected_total <= limit_usd
+
+    return {
+        "rule_id": 26,
+        "rule_title": "해외 송금 연간 누적 한도",
+        "passed": passed,
+        "legal_basis": "대한민국 외국환거래법에 따라 증빙 없이 연간 미화 5만 달러 한도",
+        "rejection_reason": (
+            f"연간 누적 해외송금 예상액 {projected_total:,} USD가 한도 {limit_usd:,} USD를 초과합니다."
+            if not passed
+            else "연간 해외송금 한도 내입니다."
+        ),
+    }
+
+
+def evaluate_rule_30_dsr(
+    annual_income: int,
+    annual_debt_service: int,
+) -> Dict[str, Any]:
+    annual_income = int(annual_income)
+    annual_debt_service = int(annual_debt_service)
+
+    if annual_income <= 0:
+        return {
+            "rule_id": 30,
+            "rule_title": "DSR(총부채원리금상환비율) 계산 기준",
+            "passed": False,
+            "legal_basis": "신규 대출 시 총 원리금이 연소득의 40% 이내여야 함",
+            "rejection_reason": "연소득이 0 이하로 입력되어 DSR 산정이 불가합니다.",
+        }
+
+    dsr = annual_debt_service / annual_income
+    passed = dsr <= 0.40
+    return {
+        "rule_id": 30,
+        "rule_title": "DSR(총부채원리금상환비율) 계산 기준",
+        "passed": passed,
+        "legal_basis": "신규 대출 시 총 원리금이 연소득의 40%를 넘지 않아야 함",
+        "rejection_reason": (
+            f"DSR {dsr:.2%}로 규정 한도 40%를 초과합니다."
+            if not passed
+            else f"DSR {dsr:.2%}로 규정 한도 40% 이내입니다."
+        ),
+        "dsr": dsr,
+    }
+
+
+def evaluate_rule_39_investment_suitability(
+    investment_profile: str,
+    requested_product_risk: str,
+) -> Dict[str, Any]:
+    normalized_profile = (investment_profile or "").strip().lower()
+    normalized_risk = (requested_product_risk or "").strip().lower()
+
+    stable_profiles = {"안정형", "stable", "conservative"}
+    high_risks = {"고위험", "high", "high-risk", "high_risk"}
+
+    violation = normalized_profile in stable_profiles and normalized_risk in high_risks
+    return {
+        "rule_id": 39,
+        "rule_title": "적합성 원칙에 따른 투자 제한",
+        "passed": not violation,
+        "legal_basis": "안정형 투자성향에는 고위험 파생상품 추천/노출 제한",
+        "rejection_reason": (
+            "투자성향이 안정형이므로 고위험 상품 요청은 적합성 원칙에 의해 제한됩니다."
+            if violation
+            else "투자 적합성 기준을 충족합니다."
+        ),
+    }
+
+
+def evaluate_compliance_26_30_39(
+    annual_remittance_usd: int,
+    request_amount_usd: int,
+    annual_income: int,
+    annual_debt_service: int,
+    investment_profile: str,
+    requested_product_risk: str,
+) -> Dict[str, Any]:
+    checks = [
+        evaluate_rule_26_foreign_limit(annual_remittance_usd, request_amount_usd),
+        evaluate_rule_30_dsr(annual_income, annual_debt_service),
+        evaluate_rule_39_investment_suitability(investment_profile, requested_product_risk),
+    ]
+
+    for check in checks:
+        if not check["passed"]:
+            return {
+                "approved": False,
+                "failed_rule_id": check["rule_id"],
+                "failed_rule_title": check["rule_title"],
+                "legal_basis": check["legal_basis"],
+                "rejection_reason": check["rejection_reason"],
+                "checks": checks,
+            }
+
+    return {
+        "approved": True,
+        "failed_rule_id": None,
+        "failed_rule_title": None,
+        "legal_basis": "ID 26/30/39 순차 검증 모두 통과",
+        "rejection_reason": None,
+        "checks": checks,
+    }
+
+
+def evaluate_compliance_by_request_type(
+    request_type: str,
+    annual_remittance_usd: int,
+    request_amount_usd: int,
+    annual_income: int,
+    annual_debt_service: int,
+    investment_profile: str,
+    requested_product_risk: str,
+) -> Dict[str, Any]:
+    normalized_type = (request_type or "").strip()
+
+    if normalized_type == "송금":
+        return {
+            "approved": True,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": "송금 요청에는 ID 26/30/39 규정이 직접 적용되지 않음",
+            "rejection_reason": None,
+            "checks": [],
+        }
+
+    if normalized_type == "해외송금":
+        check = evaluate_rule_26_foreign_limit(annual_remittance_usd, request_amount_usd)
+        if not check["passed"]:
+            return {
+                "approved": False,
+                "failed_rule_id": check["rule_id"],
+                "failed_rule_title": check["rule_title"],
+                "legal_basis": check["legal_basis"],
+                "rejection_reason": check["rejection_reason"],
+                "checks": [check],
+            }
+        return {
+            "approved": True,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": "ID 26 해외한도 검증 통과",
+            "rejection_reason": None,
+            "checks": [check],
+        }
+
+    if normalized_type == "대출":
+        check = evaluate_rule_30_dsr(annual_income, annual_debt_service)
+        if not check["passed"]:
+            return {
+                "approved": False,
+                "failed_rule_id": check["rule_id"],
+                "failed_rule_title": check["rule_title"],
+                "legal_basis": check["legal_basis"],
+                "rejection_reason": check["rejection_reason"],
+                "checks": [check],
+            }
+        return {
+            "approved": True,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": "ID 30 DSR 검증 통과",
+            "rejection_reason": None,
+            "checks": [check],
+        }
+
+    if normalized_type == "투자":
+        check = evaluate_rule_39_investment_suitability(investment_profile, requested_product_risk)
+        if not check["passed"]:
+            return {
+                "approved": False,
+                "failed_rule_id": check["rule_id"],
+                "failed_rule_title": check["rule_title"],
+                "legal_basis": check["legal_basis"],
+                "rejection_reason": check["rejection_reason"],
+                "checks": [check],
+            }
+        return {
+            "approved": True,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": "ID 39 투자적합성 검증 통과",
+            "rejection_reason": None,
+            "checks": [check],
+        }
+
+    return {
+        "approved": False,
+        "failed_rule_id": None,
+        "failed_rule_title": "지원하지 않는 요청 유형",
+        "legal_basis": "요청 유형 정책 매핑 부재",
+        "rejection_reason": f"지원하지 않는 요청 유형입니다: {normalized_type}",
+        "checks": [],
+    }
+
+
 def evaluate_unified_policy(
     grade: str,
     request_amount: int,
     daily_total: int,
     recent_small_payment_count: int,
     foreign_ip_access: bool,
+    request_type: str,
+    annual_remittance_usd: int,
+    request_amount_usd: int,
+    annual_income: int,
+    annual_debt_service: int,
+    investment_profile: str,
+    requested_product_risk: str,
 ) -> Dict[str, Any]:
     """통합 금융 정책을 평가하는 함수입니다.
     - 사용자 등급, 요청 금액, 당일 누적 이체액, 최근 1시간 내 소액 결제 횟수, 해외 IP 접근 여부를 입력으로 받아서 이체 가능 여부, 차단 여부, 추가 인증 필요 여부 등을 종합적으로 판정합니다.
@@ -212,6 +426,83 @@ def evaluate_unified_policy(
     - 차단으로 판정되지 않으면 이체 정책 평가 함수를 호출하여 이체 가능 여부와 추가 인증 필요 여부를 판정합니다.
     - 반환값은 이체 가능 여부, 차단 여부, 추가 인증 필요 여부,적용된 규정 근거, 다음 노드 안내 등을 포함하는 딕셔너리입니다.
     """
+    compliance = evaluate_compliance_by_request_type(
+        request_type=request_type,
+        annual_remittance_usd=annual_remittance_usd,
+        request_amount_usd=request_amount_usd,
+        annual_income=annual_income,
+        annual_debt_service=annual_debt_service,
+        investment_profile=investment_profile,
+        requested_product_risk=requested_product_risk,
+    )
+
+    if not compliance["approved"]:
+        return {
+            "compliance_approved": False,
+            "request_type": request_type,
+            "failed_rule_id": compliance["failed_rule_id"],
+            "failed_rule_title": compliance["failed_rule_title"],
+            "legal_basis": compliance["legal_basis"],
+            "rejection_reason": compliance["rejection_reason"],
+            "blocked": False,
+            "transferable": False,
+            "extra_auth_required": False,
+            "grade": (grade or "").strip().upper() or "UNKNOWN",
+            "request_amount": int(request_amount),
+            "daily_total": int(daily_total),
+            "next_node_id": None,
+            "next_node_name": "거절",
+            "next_node_reason": "컴플라이언스 규정 위반으로 처리 중단",
+            "reasons": [
+                f"ID {compliance['failed_rule_id']} 위반: {compliance['failed_rule_title']}",
+                compliance["rejection_reason"],
+                f"법적 근거: {compliance['legal_basis']}",
+            ],
+            "user_message": "규정 위반으로 요청이 거절되었습니다.",
+        }
+
+    if request_type == "대출":
+        return {
+            "compliance_approved": True,
+            "request_type": request_type,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": compliance["legal_basis"],
+            "rejection_reason": None,
+            "blocked": False,
+            "transferable": True,
+            "extra_auth_required": False,
+            "grade": (grade or "").strip().upper() or "UNKNOWN",
+            "request_amount": int(request_amount),
+            "daily_total": int(daily_total),
+            "next_node_id": 30,
+            "next_node_name": "Credit_Score",
+            "next_node_reason": "대출 요청은 DSR 검증 통과 후 Credit_Score 노드로 진행합니다.",
+            "reasons": ["ID 30 DSR 규정을 충족하여 대출 심사 흐름으로 이동합니다."],
+            "user_message": "대출 심사(Credit_Score) 단계로 진행됩니다.",
+        }
+
+    if request_type == "투자":
+        return {
+            "compliance_approved": True,
+            "request_type": request_type,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": compliance["legal_basis"],
+            "rejection_reason": None,
+            "blocked": False,
+            "transferable": True,
+            "extra_auth_required": False,
+            "grade": (grade or "").strip().upper() or "UNKNOWN",
+            "request_amount": int(request_amount),
+            "daily_total": int(daily_total),
+            "next_node_id": 39,
+            "next_node_name": "Investment_Suitability",
+            "next_node_reason": "투자 요청은 적합성 검증 통과 후 투자 추천 흐름으로 진행합니다.",
+            "reasons": ["ID 39 투자 적합성 기준을 충족했습니다."],
+            "user_message": "투자 적합성 검증 통과로 투자 안내를 진행합니다.",
+        }
+
     blocked_result = evaluate_blocked_transaction_history(
         recent_small_payment_count=recent_small_payment_count,
         foreign_ip_access=foreign_ip_access,
@@ -220,6 +511,12 @@ def evaluate_unified_policy(
 
     if blocked_result["blocked"]:
         return {
+            "compliance_approved": True,
+            "request_type": request_type,
+            "failed_rule_id": None,
+            "failed_rule_title": None,
+            "legal_basis": compliance["legal_basis"],
+            "rejection_reason": None,
             "blocked": True,
             "transferable": False,
             "extra_auth_required": False,
@@ -254,6 +551,12 @@ def evaluate_unified_policy(
     )
 
     return {
+        "compliance_approved": True,
+        "request_type": request_type,
+        "failed_rule_id": None,
+        "failed_rule_title": None,
+        "legal_basis": compliance["legal_basis"],
+        "rejection_reason": None,
         "blocked": False,
         "transferable": transfer_result["transferable"],
         "extra_auth_required": transfer_result["extra_auth_required"],
@@ -396,12 +699,19 @@ def _build_unified_retrieval_query(inputs: Dict[str, Any]) -> str:
     - 예시: "통합 금융 정책 검색. 등급: VIP. 요청 금액: 15000000원. 당일 누적 이체액: 30000000원. 최근 1시간 소액 결제 횟수: 3회. 해외 IP 접근 여부: 예. ID 9 FDS 차단 조건, ID 10 고객센터 연결 노드, 이체 한도, MFA 규정을 찾아주세요.
     """
     return (
+        f"요청 유형: {inputs.get('request_type', '')}. "
         f"통합 금융 정책 검색. 등급: {inputs.get('grade', '')}. "
         f"요청 금액: {inputs.get('request_amount', 0)}원. "
         f"당일 누적 이체액: {inputs.get('daily_total', 0)}원. "
         f"최근 1시간 소액 결제 횟수: {inputs.get('recent_small_payment_count', 0)}회. "
         f"해외 IP 접근 여부: {'예' if inputs.get('foreign_ip_access', False) else '아니오'}. "
-        "ID 9 FDS 차단 조건, ID 10 고객센터 연결 노드, 이체 한도, MFA 규정을 찾아주세요."
+        f"연간 해외송금 누적: {inputs.get('annual_remittance_usd', 0)} USD. "
+        f"이번 해외송금 요청: {inputs.get('request_amount_usd', 0)} USD. "
+        f"연소득: {inputs.get('annual_income', 0)}원. "
+        f"연간 총원리금: {inputs.get('annual_debt_service', 0)}원. "
+        f"투자성향: {inputs.get('investment_profile', '')}. "
+        f"요청상품 위험등급: {inputs.get('requested_product_risk', '')}. "
+        "ID 26 해외한도, ID 30 DSR, ID 39 투자적합성, ID 9 FDS, ID 10 고객센터 연결, 이체 한도, MFA 규정을 찾아주세요."
     )
 
 
@@ -427,11 +737,18 @@ def build_unified_banking_chain(vectorstore, llm=None):
             ("system", UNIFIED_PROMPT),
             (
                 "human",
+                "요청 유형: {request_type}\n"
                 "사용자 등급: {grade}\n"
                 "요청 금액: {request_amount}원\n"
                 "당일 누적 이체액: {daily_total}원\n"
                 "최근 1시간 소액 결제 횟수: {recent_small_payment_count}회\n"
                 "해외 IP 접근 여부: {foreign_ip_access}\n"
+                "연간 해외송금 누적: {annual_remittance_usd} USD\n"
+                "이번 해외송금 요청: {request_amount_usd} USD\n"
+                "연소득: {annual_income}원\n"
+                "연간 총원리금: {annual_debt_service}원\n"
+                "투자성향: {investment_profile}\n"
+                "요청상품 위험등급: {requested_product_risk}\n"
                 "질문: 확정된 규칙 판정이 왜 나왔는지, 벡터 검색된 규정 근거를 들어 설명해 주세요.",
             ),
         ]
@@ -448,6 +765,13 @@ def build_unified_banking_chain(vectorstore, llm=None):
                         daily_total=inputs.get("daily_total", 0),
                         recent_small_payment_count=inputs.get("recent_small_payment_count", 0),
                         foreign_ip_access=inputs.get("foreign_ip_access", False),
+                        request_type=inputs.get("request_type", ""),
+                        annual_remittance_usd=inputs.get("annual_remittance_usd", 0),
+                        request_amount_usd=inputs.get("request_amount_usd", 0),
+                        annual_income=inputs.get("annual_income", 0),
+                        annual_debt_service=inputs.get("annual_debt_service", 0),
+                        investment_profile=inputs.get("investment_profile", ""),
+                        requested_product_risk=inputs.get("requested_product_risk", ""),
                     ),
                     ensure_ascii=False,
                     indent=2,

@@ -51,6 +51,19 @@ def ask_grade() -> str:
 	return "일반"
 
 
+def ask_request_type() -> str:
+	raw_value = input("요청 유형을 선택하세요 (1=송금, 2=해외송금, 3=대출, 4=투자): ").strip().lower()
+	if raw_value in {"1", "송금", "transfer"}:
+		return "송금"
+	if raw_value in {"2", "해외송금", "overseas"}:
+		return "해외송금"
+	if raw_value in {"3", "대출", "loan"}:
+		return "대출"
+	if raw_value in {"4", "투자", "investment"}:
+		return "투자"
+	return "송금"
+
+
 def ask_yes_no(prompt: str, default: bool = False) -> bool:
 	"""사용자에게 예/아니오 입력을 요청하는 함수입니다.
 	- 입력이 없으면 기본값을 반환합니다.
@@ -60,6 +73,28 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
 	if not raw_value:
 		return default
 	return raw_value in {"y", "yes", "1", "true", "t", "예"}
+
+
+def ask_investment_profile() -> str:
+	raw_value = input("투자 성향을 선택하세요 (1=안정형, 2=중립형, 3=공격형): ").strip().lower()
+	if raw_value in {"1", "안정형", "stable"}:
+		return "안정형"
+	if raw_value in {"2", "중립형", "neutral"}:
+		return "중립형"
+	if raw_value in {"3", "공격형", "aggressive"}:
+		return "공격형"
+	return "중립형"
+
+
+def ask_product_risk() -> str:
+	raw_value = input("요청 상품 위험등급을 선택하세요 (1=저위험, 2=중위험, 3=고위험): ").strip().lower()
+	if raw_value in {"1", "저위험", "low"}:
+		return "저위험"
+	if raw_value in {"2", "중위험", "medium"}:
+		return "중위험"
+	if raw_value in {"3", "고위험", "high"}:
+		return "고위험"
+	return "중위험"
 
 
 def classify_ip_region(is_foreign_ip: bool) -> str:
@@ -169,11 +204,19 @@ def render_decision_summary(decision: dict) -> str:
 	next_node = decision.get("next_node_name") or "일반 검증 흐름"
 
 	lines = [
+		f"요청 유형: {decision.get('request_type', '미정')}",
+		f"컴플라이언스(ID 26/30/39): {'통과' if decision.get('compliance_approved', True) else '거절'}",
 		f"이체 가능 여부: {transferable_text}",
 		f"차단 여부(ID 9): {blocked_text}",
 		f"추가 인증 필요 여부: {extra_auth_text}",
 		f"다음 노드: {next_node}",
 	]
+
+	if not decision.get("compliance_approved", True):
+		lines.append(f"거절 규정 ID: {decision.get('failed_rule_id')}")
+		lines.append(f"거절 규정: {decision.get('failed_rule_title')}")
+		lines.append(f"법적 근거: {decision.get('legal_basis')}")
+		lines.append(f"거절 사유: {decision.get('rejection_reason')}")
 
 	reasons = decision.get("reasons", [])
 	if reasons:
@@ -204,21 +247,51 @@ def main():
 	chain = build_unified_banking_chain(vectorstore)
 
 	grade = ask_grade()
-	request_amount = ask_int("요청 금액을 입력하세요(원): ")
-	foreign_ip_access = ask_yes_no("해외 IP 접근인가요? (y/n): ")
+	request_type = ask_request_type()
+	request_amount = ask_int("요청 금액을 입력하세요(원): ") if request_type in {"송금", "해외송금"} else 0
+	foreign_ip_access = ask_yes_no("해외 IP 접근인가요? (y/n): ") if request_type in {"송금", "해외송금"} else False
+
+	annual_remittance_usd = 0
+	request_amount_usd = 0
+	if request_type == "해외송금":
+		annual_remittance_usd = ask_int("연간 해외송금 누적 금액을 입력하세요(USD): ", 0)
+		request_amount_usd = ask_int("이번 해외송금 요청 금액을 입력하세요(USD): ", 0)
+
+	annual_income = 0
+	annual_debt_service = 0
+	if request_type == "대출":
+		annual_income = ask_int("연소득을 입력하세요(원): ", 0)
+		annual_debt_service = ask_int("연간 총원리금 상환액을 입력하세요(원): ", 0)
+
+	investment_profile = "중립형"
+	requested_product_risk = "중위험"
+	if request_type == "투자":
+		investment_profile = ask_investment_profile()
+		requested_product_risk = ask_product_risk()
 	now = datetime.now()
 	records = load_transaction_history()
-	daily_total = calculate_daily_total(records, now)
-	recent_small_payment_count = calculate_recent_small_payment_count(records, now, request_amount)
+	daily_total = calculate_daily_total(records, now) if request_type in {"송금", "해외송금"} else 0
+	recent_small_payment_count = (
+		calculate_recent_small_payment_count(records, now, request_amount)
+		if request_type in {"송금", "해외송금"}
+		else 0
+	)
 	ip_region = classify_ip_region(foreign_ip_access)
 
 	input_payload = {
-		"question": "통합 금융 정책으로 이체 가능 여부, 차단 여부(ID 9), 다음 노드(ID 10), 추가 인증을 안내해 주세요.",
+		"question": "ID 26, ID 30, ID 39를 순차 검증하고 위반 시 법적 근거와 거절 사유를 설명해 주세요.",
+		"request_type": request_type,
 		"grade": grade,
 		"request_amount": request_amount,
 		"daily_total": daily_total,
 		"recent_small_payment_count": recent_small_payment_count,
 		"foreign_ip_access": foreign_ip_access,
+		"annual_remittance_usd": annual_remittance_usd,
+		"request_amount_usd": request_amount_usd,
+		"annual_income": annual_income,
+		"annual_debt_service": annual_debt_service,
+		"investment_profile": investment_profile,
+		"requested_product_risk": requested_product_risk,
 	}
 
 	result = chain.invoke(input_payload)
@@ -228,6 +301,13 @@ def main():
 		daily_total=daily_total,
 		recent_small_payment_count=recent_small_payment_count,
 		foreign_ip_access=foreign_ip_access,
+		request_type=request_type,
+		annual_remittance_usd=annual_remittance_usd,
+		request_amount_usd=request_amount_usd,
+		annual_income=annual_income,
+		annual_debt_service=annual_debt_service,
+		investment_profile=investment_profile,
+		requested_product_risk=requested_product_risk,
 	)
 
 	history.add_user_message(
@@ -237,11 +317,23 @@ def main():
 
 	log_record = {
 		"timestamp": now.isoformat(timespec="seconds"),
+		"request_type": request_type,
 		"grade": grade,
 		"request_amount": request_amount,
+		"annual_remittance_usd": annual_remittance_usd,
+		"request_amount_usd": request_amount_usd,
+		"annual_income": annual_income,
+		"annual_debt_service": annual_debt_service,
+		"investment_profile": investment_profile,
+		"requested_product_risk": requested_product_risk,
 		"daily_total": daily_total,
 		"recent_small_payment_count": recent_small_payment_count,
 		"ip_region": ip_region,
+		"compliance_approved": decision.get("compliance_approved", True),
+		"failed_rule_id": decision.get("failed_rule_id"),
+		"failed_rule_title": decision.get("failed_rule_title"),
+		"legal_basis": decision.get("legal_basis"),
+		"rejection_reason": decision.get("rejection_reason"),
 		"blocked": decision.get("blocked", False),
 		"transferable": decision.get("transferable", False),
 		"extra_auth_required": decision.get("extra_auth_required", False),
