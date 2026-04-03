@@ -142,6 +142,33 @@ def render_decision_summary(decision: dict) -> str:
 	return "\n".join(lines)
 
 
+def render_rag_explanation(decision: dict) -> str:
+	transferable_text = "가능" if decision.get("transferable", False) else "불가"
+	blocked_text = "차단" if decision.get("blocked", False) else "차단되지 않음"
+	extra_auth_text = "필요" if decision.get("extra_auth_required", False) else "불필요"
+	next_node = decision.get("next_node_name") or "일반 검증 흐름"
+
+	lines = [
+		"통합 금융 정책 설명:",
+		f"- 이체 가능 여부: {transferable_text}",
+		f"- 차단 여부(ID 9): {blocked_text}",
+		f"- 추가 인증 필요 여부: {extra_auth_text}",
+		f"- 다음 노드: {next_node}",
+	]
+
+	reasons = decision.get("reasons", [])
+	if reasons:
+		lines.append("- 근거:")
+		for reason in reasons:
+			lines.append(f"  - {reason}")
+
+	user_message = decision.get("user_message")
+	if user_message:
+		lines.append(f"- 사용자 안내: {user_message}")
+
+	return "\n".join(lines)
+
+
 def main():
 	load_dotenv()
 	vectorstore = get_vectorstore()
@@ -177,7 +204,7 @@ def main():
 	history.add_user_message(
 		f"grade={grade}, amount={request_amount}, daily_total={daily_total}, small_payments_1h={recent_small_payment_count}, region={ip_region}"
 	)
-	history.add_ai_message(result)
+	history.add_ai_message(render_decision_summary(decision))
 
 	log_record = {
 		"timestamp": now.isoformat(timespec="seconds"),
@@ -196,8 +223,8 @@ def main():
 
 	print("\n=== 결정 결과(고정) ===")
 	print(render_decision_summary(decision))
-	print("\n=== RAG 설명(보조) ===")
-	print(result)
+	print("\n=== RAG 설명(결정값 기반) ===")
+	print(render_rag_explanation(decision))
 	print("\n=== 저장된 거래 요약 ===")
 	print(json.dumps(log_record, ensure_ascii=False, indent=2))
 
